@@ -2,43 +2,92 @@ import pandas as pd
 import json
 from datetime import datetime
 
-def export_data_for_mockplus():
-    # 读取数据
-    sales_data = pd.read_excel("销售数据.xlsx")
-    customer_data = pd.read_excel("客户数据.xlsx")
-    product_data = pd.read_excel("产品数据.xlsx")
-    region_data = pd.read_excel("地区数据.xlsx")
+def export_data_for_mockplus(stores_data, sales_data, store_data):
+    # 数据预处理
+    sales_data = sales_data.copy()
+    store_data = store_data.copy()
+    stores_data = stores_data.copy()
+    
+    # 日期转换
+    sales_data['Date'] = pd.to_datetime(sales_data['Date'])
+    store_data['Date'] = pd.to_datetime(store_data['Date'])
+    
+    # 合并数据
+    merged_data = sales_data.merge(stores_data, on='Store')
+    merged_data = merged_data.merge(store_data, on=['Store', 'Date'], how='left')
+    
+    # 计算基础指标
+    total_sales = float(sales_data['Weekly_Sales'].sum())
+    total_stores = int(len(stores_data))
+    avg_store_size = float(stores_data['Size'].mean())
+    total_depts = int(len(sales_data['Dept'].unique()))
+    
+    # 计算门店类型分析
+    store_analysis = merged_data.groupby('Type').agg({
+        'Weekly_Sales': ['sum', 'mean'],
+        'Store': 'count'
+    })
+    store_analysis.columns = ['total_sales', 'avg_sales', 'store_count']
+    store_analysis = store_analysis.reset_index()
+    
+    # 计算部门分析
+    dept_analysis = merged_data.groupby('Dept').agg({
+        'Weekly_Sales': ['sum', 'mean'],
+        'Store': 'nunique'
+    })
+    dept_analysis.columns = ['total_sales', 'avg_sales', 'store_count']
+    dept_analysis = dept_analysis.reset_index()
+    
+    # 计算环境因素相关性
+    env_correlation = merged_data[['Weekly_Sales', 'Temperature', 'Fuel_Price', 'CPI', 'Unemployment']].corr()
     
     # 准备dashboard数据
     dashboard_data = {
         "overview": {
-            "total_sales": float(sales_data['销售额'].sum()),
-            "total_orders": len(sales_data),
-            "avg_order_value": float(sales_data['销售额'].mean()),
-            "total_customers": len(customer_data),
-            "total_products": len(product_data)
+            "total_sales": total_sales,
+            "total_stores": total_stores,
+            "avg_store_size": avg_store_size,
+            "total_depts": total_depts,
+            "avg_sales_per_store": total_sales / total_stores if total_stores > 0 else 0,
+            "avg_sales_per_dept": total_sales / total_depts if total_depts > 0 else 0
         },
         "sales_trend": {
-            "dates": sales_data.groupby('日期')['销售额'].sum().reset_index()['日期'].dt.strftime('%Y-%m-%d').tolist(),
-            "values": sales_data.groupby('日期')['销售额'].sum().reset_index()['销售额'].tolist()
+            "dates": merged_data.groupby('Date')['Weekly_Sales'].sum().index.strftime('%Y-%m-%d').tolist(),
+            "values": merged_data.groupby('Date')['Weekly_Sales'].sum().tolist(),
+            "avg_daily_sales": float(merged_data.groupby('Date')['Weekly_Sales'].sum().mean())
         },
-        "customer_distribution": {
-            "types": customer_data['客户类型'].value_counts().index.tolist(),
-            "counts": customer_data['客户类型'].value_counts().values.tolist()
+        "store_analysis": {
+            "types": store_analysis['Type'].tolist(),
+            "counts": store_analysis['store_count'].tolist(),
+            "total_sales": store_analysis['total_sales'].tolist(),
+            "avg_sales": store_analysis['avg_sales'].tolist()
         },
-        "top_products": {
-            "names": sales_data.groupby('产品ID')['数量'].sum().reset_index()
-                .merge(product_data, on='产品ID')
-                .nlargest(10, '数量')['产品名称'].tolist(),
-            "quantities": sales_data.groupby('产品ID')['数量'].sum().reset_index()
-                .merge(product_data, on='产品ID')
-                .nlargest(10, '数量')['数量'].tolist()
+        "department_analysis": {
+            "names": dept_analysis['Dept'].tolist(),
+            "total_sales": dept_analysis['total_sales'].tolist(),
+            "avg_sales": dept_analysis['avg_sales'].tolist(),
+            "store_count": dept_analysis['store_count'].tolist()
         },
-        "region_sales": {
-            "regions": sales_data.groupby('地区ID')['销售额'].sum().reset_index()
-                .merge(region_data, on='地区ID')['地区名称'].tolist(),
-            "sales": sales_data.groupby('地区ID')['销售额'].sum().reset_index()
-                .merge(region_data, on='地区ID')['销售额'].tolist()
+        "environment_analysis": {
+            "dates": store_data['Date'].dt.strftime('%Y-%m-%d').tolist(),
+            "temperature": store_data['Temperature'].tolist(),
+            "fuel_price": store_data['Fuel_Price'].tolist(),
+            "cpi": store_data['CPI'].tolist(),
+            "unemployment": store_data['Unemployment'].tolist(),
+            "correlations": {
+                "temperature": float(env_correlation.loc['Weekly_Sales', 'Temperature']),
+                "fuel_price": float(env_correlation.loc['Weekly_Sales', 'Fuel_Price']),
+                "cpi": float(env_correlation.loc['Weekly_Sales', 'CPI']),
+                "unemployment": float(env_correlation.loc['Weekly_Sales', 'Unemployment'])
+            }
+        },
+        "holiday_analysis": {
+            "holiday_sales": float(merged_data[merged_data['IsHoliday'] == True]['Weekly_Sales'].mean()),
+            "non_holiday_sales": float(merged_data[merged_data['IsHoliday'] == False]['Weekly_Sales'].mean()),
+            "holiday_impact": float((
+                merged_data[merged_data['IsHoliday'] == True]['Weekly_Sales'].mean() /
+                merged_data[merged_data['IsHoliday'] == False]['Weekly_Sales'].mean() - 1
+            ) * 100) if len(merged_data[merged_data['IsHoliday'] == False]) > 0 else 0
         }
     }
     
@@ -48,5 +97,12 @@ def export_data_for_mockplus():
     
     print("数据已导出到 mockplus_data.json")
 
+# 用于独立测试
 if __name__ == "__main__":
-    export_data_for_mockplus() 
+    # 读取数据
+    stores_data = pd.read_csv("stores data-set.csv")
+    sales_data = pd.read_csv("sales data-set.csv")
+    store_data = pd.read_csv("Features data set.csv")
+    
+    # 调用导出函数
+    export_data_for_mockplus(stores_data, sales_data, store_data)
